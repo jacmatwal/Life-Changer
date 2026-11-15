@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Life Changer</title>
+<meta name="description" content="An interactive walk-through of the one-day reset protocol from Dan Koe's essay How to fix your entire life in 1 day.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400..700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!-- app:start -->
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="#start">Life Changer</a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#start" data-route="start">Start</a>
+      <a href="#ideas" data-route="ideas">Ideas</a>
+      <a href="#morning" data-route="morning">Morning</a>
+      <a href="#day" data-route="day">Day</a>
+      <a href="#evening" data-route="evening">Evening</a>
+      <a href="#game" data-route="game">Game</a>
+    </nav>
+  </div>
+</header>
+
+<div id="notice" class="wrap notice" role="status" hidden></div>
+
+<main id="view" class="wrap view" tabindex="-1">
+  <noscript><p>Life Changer needs JavaScript to run.</p></noscript>
+</main>
+
+<footer class="wrap foot">
+  <p>
+    An unofficial companion to Dan Koe&rsquo;s essay
+    <a id="source-link" href="https://letters.thedankoe.com/p/how-to-fix-your-entire-life-in-1" target="_blank" rel="noopener">How to fix your entire life in 1 day</a>.
+    The ideas are his. The wording here is a simplified paraphrase, so read the original for the full argument.
+  </p>
+  <p>Your answers are saved in this browser only and are never sent anywhere. This is a reflection exercise, not mental-health care.</p>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<!-- app:end -->
+<script src="content.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
