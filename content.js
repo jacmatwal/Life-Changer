@@ -18,10 +18,11 @@ window.LC_CONTENT = {
       { route: 'morning', name: 'Morning', kind: 'Excavation', text: '15 to 30 minutes. Fourteen questions about the pain you tolerate, the life you don’t want and the one you do.' },
       { route: 'day', name: 'Daytime', kind: 'Pattern interrupts', text: 'Six timed questions that pull you out of autopilot. Set the reminders before you start.' },
       { route: 'evening', name: 'Evening', kind: 'Synthesis', text: 'Name the real enemy, then set a one-year lens, a one-month lens and tomorrow’s actions.' },
-      { route: 'game', name: 'Game board', kind: 'Your plan on one page', text: 'Six pieces: stakes, win condition, mission, boss fight, daily quests and rules.' }
+      { route: 'game', name: 'Game board', kind: 'Your plan on one page', text: 'Six pieces: stakes, win condition, mission, boss fight, daily quests and rules.' },
+      { route: 'game', year: true, name: 'The year', kind: 'Keep playing', text: 'Tick off the quests each day, review and replace the project each month, and run the protocol again after twelve months.' }
     ],
     notes: [
-      { title: 'Give it a full day', text: 'A morning sitting, six interruptions and an evening sitting. Koe suggests running it once a year to reset.' },
+      { title: 'One day, then a year', text: 'The questions take a single day: a morning sitting, six interruptions and an evening sitting. The game board is what you keep using afterwards, and Koe suggests rerunning the day once a year.' },
       { title: 'Do your own thinking', text: 'Koe is explicit: don’t hand these questions to AI. Questioning is thinking, and the point is to push past your own limits.' },
       { title: 'Pen and paper work too', text: 'The essay asks for pen and paper. Typing here is fine if you write real sentences. If a keyboard makes you skim, write by hand and use this for the questions and the check-ins.' },
       { title: 'Tension comes first', text: 'People who change fast go through three phases: dissonance, uncertainty, then discovery. Expect the morning to be uncomfortable.' },

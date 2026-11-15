@@ -5,7 +5,9 @@
   // Set by embedded builds whose host frame blocks file downloads.
   const EMBED = !!window.LC_EMBED;
   const STORE_KEY = 'life-changer:v1';
-  const ROUTES = ['start', 'ideas', 'morning', 'day', 'evening', 'game'];
+  const ROUTES = ['start', 'ideas', 'morning', 'day', 'evening', 'game', 'review'];
+  const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+  const INSTALLED = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
   const view = document.getElementById('view');
   const toastEl = document.getElementById('toast');
@@ -14,25 +16,76 @@
   /* ---------- state ---------- */
 
   function blankState() {
-    return { answers: {}, quests: {}, times: {}, pos: { morning: 0, evening: 0 }, loop: 0, stage: 3 };
+    return {
+      answers: {},
+      quests: {},
+      times: {},
+      pos: { morning: 0, evening: 0 },
+      loop: 0,
+      stage: 3,
+      run: null, // { start: 'YYYY-MM-DD' }, set when the first answer is written
+      cycle: null, // { n, start } for the one-month project in play
+      months: [], // closed months, oldest first
+      past: [], // earlier runs of the protocol, kept as readable text
+      remindAt: 8 * 60,
+      lastBackup: null
+    };
+  }
+
+  // Takes anything (an old save, a pasted backup) and returns a complete, well-formed state.
+  function normalise(saved) {
+    const base = blankState();
+    if (!saved || typeof saved !== 'object') return base;
+    const entries = (obj) => (obj && typeof obj === 'object' ? Object.keys(obj).map((key) => [key, obj[key]]) : []);
+    const text = (value) => (typeof value === 'string' ? value : '');
+    const dated = (value) => (value && typeof value === 'object' && DATE_KEY.test(value.start) ? value : null);
+
+    entries(saved.answers).forEach(([key, value]) => {
+      if (typeof value === 'string') base.answers[key] = value;
+    });
+    entries(saved.quests).forEach(([key, value]) => {
+      if (!DATE_KEY.test(key) || !value || !Array.isArray(value.done)) return;
+      base.quests[key] = { done: value.done.filter((item) => typeof item === 'string'), n: Number(value.n) || 0 };
+    });
+    entries(saved.times).forEach(([key, value]) => {
+      if (Number.isInteger(value) && value >= 0 && value < 24 * 60) base.times[key] = value;
+    });
+    Object.assign(base.pos, saved.pos);
+    base.loop = Number(saved.loop) || 0;
+    if (Number.isInteger(saved.stage)) base.stage = saved.stage;
+    if (dated(saved.run)) base.run = { start: saved.run.start };
+    if (dated(saved.cycle)) base.cycle = { n: Number(saved.cycle.n) || 1, start: saved.cycle.start };
+    if (Array.isArray(saved.months)) {
+      base.months = saved.months
+        .filter((m) => dated(m) && DATE_KEY.test(m.end))
+        .map((m) => ({
+          n: Number(m.n) || 1,
+          start: m.start,
+          end: m.end,
+          project: text(m.project),
+          result: text(m.result),
+          compare: text(m.compare),
+          adjust: text(m.adjust),
+          full: Number(m.full) || 0,
+          days: Number(m.days) || 0
+        }));
+    }
+    if (Array.isArray(saved.past)) {
+      base.past = saved.past
+        .filter((p) => dated(p) && DATE_KEY.test(p.end))
+        .map((p) => ({ start: p.start, end: p.end, text: text(p.text) }));
+    }
+    if (Number.isInteger(saved.remindAt) && saved.remindAt >= 0 && saved.remindAt < 24 * 60) base.remindAt = saved.remindAt;
+    if (typeof saved.lastBackup === 'string') base.lastBackup = saved.lastBackup;
+    return base;
   }
 
   function loadState() {
-    const base = blankState();
     try {
       const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return base;
-      const saved = JSON.parse(raw);
-      return {
-        answers: Object.assign(base.answers, saved.answers),
-        quests: Object.assign(base.quests, saved.quests),
-        times: Object.assign(base.times, saved.times),
-        pos: Object.assign(base.pos, saved.pos),
-        loop: Number(saved.loop) || 0,
-        stage: Number.isInteger(saved.stage) ? saved.stage : base.stage
-      };
+      return normalise(raw ? JSON.parse(raw) : null);
     } catch (err) {
-      return base;
+      return blankState();
     }
   }
 
@@ -89,9 +142,14 @@
 
   const countDone = (phase) => KEYS[phase].filter(filled).length;
 
+  // Every key the protocol itself asks for (the monthly review drafts are not part of it).
+  const PROTOCOL_KEYS = KEYS.morning.concat(KEYS.day, C.day.extras.map((x) => x.id), KEYS.evening);
+
   function currentRoute() {
     const name = location.hash.replace(/^#/, '');
-    return ROUTES.includes(name) ? name : 'start';
+    if (ROUTES.includes(name)) return name;
+    // Once the board is filled in, it is the home screen.
+    return KEYS.game.every(filled) ? 'game' : 'start';
   }
 
   const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -106,6 +164,24 @@
       .trim();
 
   const dateKey = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const parseKey = (key) => {
+    const parts = key.split('-').map(Number);
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  };
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const dayDiff = (from, to) => Math.round((startOfDay(to) - startOfDay(from)) / 86400000);
+  // Same day of the month n months on, pulled back to the month's last day when it is shorter.
+  const addMonths = (d, n) => {
+    const first = new Date(d.getFullYear(), d.getMonth() + n, 1);
+    const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    return new Date(first.getFullYear(), first.getMonth(), Math.min(d.getDate(), lastDay));
+  };
+  const shortDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
+  const longDate = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  const datedDay = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const dateRange = (from, to) => shortDate.format(from) + ' to ' + shortDate.format(to);
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
   const minutesNow = () => {
     const d = new Date();
     return d.getHours() * 60 + d.getMinutes();
@@ -168,14 +244,17 @@
         <ol class="plan">
           ${S.plan
             .map((row) => {
+              const year = row.year ? yearInfo() : null;
               const done = countDone(row.route);
               const all = KEYS[row.route].length;
+              const share = row.year ? (year ? clamp(year.day / year.length, 0, 1) : 0) : done / all;
+              const tally = row.year ? (year ? 'Day ' + Math.min(year.day, year.length) : '–') : done + '/' + all;
               return `
                 <li data-route="${row.route}">
                   <a href="#${row.route}">
-                    <span class="plan-mark" style="--p:${done / all}"></span>
+                    <span class="plan-mark" style="--p:${share.toFixed(3)}"></span>
                     <span class="plan-name">${esc(row.name)} <span class="plan-kind">· ${esc(row.kind)}</span></span>
-                    <span class="plan-count mono" aria-label="${done} of ${all} done">${done}/${all}</span>
+                    <span class="plan-count mono">${esc(tally)}</span>
                     <span class="plan-text">${esc(row.text)}</span>
                   </a>
                 </li>`;
@@ -553,29 +632,31 @@
     return sortedCheckins().map((c) => formatTime(timeOf(c)) + '  ' + c.prompt).join('\n');
   }
 
-  function icsText() {
-    const day = reminderDate();
-    const ymd = '' + day.getFullYear() + pad(day.getMonth() + 1) + pad(day.getDate());
+  // Builds a calendar file. Each event is { uid, date, at, summary, description, rrule }.
+  function icsCalendar(events) {
+    const ymd = (d) => '' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate());
     const hm = (minutes) => pad(Math.floor(minutes / 60)) + pad(minutes % 60) + '00';
-    const icsEscape = (s) => s.replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
+    const icsEscape = (text) => text.replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
     // RFC 5545 wants lines folded at 75 octets; fold at 60 characters to stay clear of it.
     const fold = (line) => line.replace(/(.{60})(?=.)/g, '$1\r\n ');
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Life Changer//One-day reset//EN', 'CALSCALE:GREGORIAN'];
-    sortedCheckins().forEach((c) => {
-      const at = timeOf(c);
-      const text = icsEscape(c.prompt);
+    events.forEach((event) => {
+      const summary = icsEscape(event.summary);
       lines.push(
         'BEGIN:VEVENT',
-        'UID:' + ymd + '-' + c.id + '@life-changer',
+        'UID:' + event.uid + '@life-changer',
         'DTSTAMP:' + stamp,
-        'DTSTART:' + ymd + 'T' + hm(at),
-        'DTEND:' + ymd + 'T' + hm(Math.min(at + 10, 24 * 60 - 1)),
-        'SUMMARY:' + text,
-        'DESCRIPTION:Life Changer check-in. Answer it in the app.',
+        'DTSTART:' + ymd(event.date) + 'T' + hm(event.at),
+        'DTEND:' + ymd(event.date) + 'T' + hm(Math.min(event.at + 10, 24 * 60 - 1))
+      );
+      if (event.rrule) lines.push('RRULE:' + event.rrule);
+      lines.push(
+        'SUMMARY:' + summary,
+        'DESCRIPTION:' + icsEscape(event.description),
         'BEGIN:VALARM',
         'ACTION:DISPLAY',
-        'DESCRIPTION:' + text,
+        'DESCRIPTION:' + summary,
         'TRIGGER:PT0M',
         'END:VALARM',
         'END:VEVENT'
@@ -583,6 +664,126 @@
     });
     lines.push('END:VCALENDAR');
     return lines.map(fold).join('\r\n') + '\r\n';
+  }
+
+  function icsText() {
+    const day = reminderDate();
+    return icsCalendar(
+      sortedCheckins().map((c) => ({
+        uid: dateKey(day) + '-' + c.id,
+        date: day,
+        at: timeOf(c),
+        summary: c.prompt,
+        description: 'Life Changer check-in. Answer it in the app.'
+      }))
+    );
+  }
+
+  // A daily reminder for the quests until the year is up, and a monthly one for the review.
+  function yearIcsText() {
+    const at = state.remindAt;
+    const today = startOfDay(new Date());
+    const first = minutesNow() < at ? today : addDays(today, 1);
+    const year = yearInfo();
+    const days = year && !year.over ? Math.max(1, dayDiff(first, year.end)) : 365;
+    const where = location.href.split('#')[0];
+    const events = [
+      {
+        uid: 'daily-' + dateKey(first),
+        date: first,
+        at: at,
+        rrule: 'FREQ=DAILY;COUNT=' + days,
+        summary: 'Life Changer: today’s quests',
+        description: 'Tick off your daily quests. ' + where
+      }
+    ];
+    const cycle = cycleInfo();
+    if (cycle) {
+      const due = cycle.end > today ? cycle.end : first;
+      events.push({
+        uid: 'monthly-' + dateKey(due),
+        date: due,
+        at: at,
+        rrule: 'FREQ=MONTHLY;COUNT=12',
+        summary: 'Life Changer: review the month and pick the next project',
+        description: 'Close out the month. ' + where + '#review'
+      });
+    }
+    return icsCalendar(events);
+  }
+
+  /* ---------- the year: clocks and quest history ---------- */
+
+  // Starts the year clock at the first answer and the month clock when a project is first written.
+  function syncDates() {
+    const todayKey = dateKey(new Date());
+    if (!state.run && PROTOCOL_KEYS.some(filled)) {
+      const firstLogged = Object.keys(state.quests).sort()[0];
+      state.run = { start: firstLogged && firstLogged < todayKey ? firstLogged : todayKey };
+    }
+    if (!state.cycle && filled('month')) state.cycle = { n: state.months.length + 1, start: todayKey };
+  }
+
+  function yearInfo() {
+    if (!state.run) return null;
+    const start = parseKey(state.run.start);
+    const end = addMonths(start, 12);
+    const length = dayDiff(start, end);
+    const day = dayDiff(start, new Date()) + 1;
+    return { start: start, end: end, length: length, day: day, over: day > length };
+  }
+
+  function cycleInfo() {
+    if (!state.cycle) return null;
+    const start = parseKey(state.cycle.start);
+    const end = addMonths(start, 1);
+    const left = dayDiff(new Date(), end);
+    return { n: state.cycle.n, start: start, end: end, left: left, due: left <= 0 };
+  }
+
+  // Quests done and quests set on a given day. Today is counted against the current list.
+  function dayRecord(key) {
+    const rec = state.quests[key];
+    if (key === dateKey(new Date())) {
+      const quests = questList();
+      return { done: rec ? quests.filter((text) => rec.done.includes(text)).length : 0, total: quests.length };
+    }
+    return rec ? { done: Math.min(rec.done.length, rec.n), total: rec.n } : { done: 0, total: 0 };
+  }
+
+  function dayStatus(key) {
+    const rec = dayRecord(key);
+    if (!rec.total || !rec.done) return 'none';
+    return rec.done >= rec.total ? 'full' : 'some';
+  }
+
+  // Counts days in [from, to) and how many of them had every quest done.
+  function countFullDays(from, to) {
+    let days = 0;
+    let full = 0;
+    for (let d = startOfDay(from); d < to; d = addDays(d, 1)) {
+      days += 1;
+      if (dayStatus(dateKey(d)) === 'full') full += 1;
+    }
+    return { days: days, full: full };
+  }
+
+  // Full days in a row, ending today, or yesterday while today is still open.
+  function currentStreak() {
+    let d = startOfDay(new Date());
+    if (dayStatus(dateKey(d)) !== 'full') d = addDays(d, -1);
+    let streak = 0;
+    while (dayStatus(dateKey(d)) === 'full') {
+      streak += 1;
+      d = addDays(d, -1);
+    }
+    return streak;
+  }
+
+  function readoutText(key) {
+    const rec = dayRecord(key);
+    const label = longDate.format(parseKey(key));
+    return rec.total ? label + ': ' + rec.done + ' of ' + plural(rec.total, 'quest') + ' done' : label + ': no quests logged';
   }
 
   /* ---------- game ---------- */
@@ -596,9 +797,8 @@
 
   function questsHtml() {
     const quests = questList();
-    const today = new Date();
-    const todayKey = dateKey(today);
-    const record = state.quests[todayKey] || { done: [], n: 0 };
+    const today = startOfDay(new Date());
+    const record = state.quests[dateKey(today)] || { done: [], n: 0 };
     const dateLabel = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' }).format(today);
     const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
 
@@ -618,24 +818,13 @@
 
     const cells = [];
     for (let back = 6; back >= 0; back--) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - back);
-      const key = dateKey(d);
-      const rec = state.quests[key];
-      let done = 0;
-      let total = 0;
-      if (back === 0) {
-        total = quests.length;
-        done = quests.filter((text) => record.done.includes(text)).length;
-      } else if (rec) {
-        total = rec.n;
-        done = Math.min(rec.done.length, rec.n);
-      }
+      const day = addDays(today, -back);
+      const rec = dayRecord(dateKey(day));
       cells.push(`
         <li class="${back === 0 ? 'is-today' : ''}">
-          <span>${esc(weekday.format(d))}</span>
-          <span class="week-bar" style="--f:${total ? done / total : 0}"></span>
-          <span>${total ? done + '/' + total : '–'}</span>
+          <span>${esc(weekday.format(day))}</span>
+          <span class="week-bar" style="--f:${rec.total ? rec.done / rec.total : 0}"></span>
+          <span>${rec.total ? rec.done + '/' + rec.total : '–'}</span>
         </li>`);
     }
 
@@ -659,6 +848,7 @@
     state.quests[key] = { done: kept, n: quests.length };
     save();
     paintQuests();
+    paintYear();
     const box = document.getElementById('quest-' + index);
     if (box) box.focus();
   }
@@ -668,14 +858,144 @@
     if (host) host.innerHTML = questsHtml();
   }
 
+  function paintYear() {
+    const host = document.getElementById('year');
+    if (host) host.innerHTML = yearHtml();
+  }
+
+  function statusHtml() {
+    const year = yearInfo();
+    if (!year) return '';
+    const cycle = cycleInfo();
+    const parts = [year.over ? 'Year complete' : 'Day ' + year.day + ' of ' + year.length];
+    if (cycle && !year.over) parts.push('Month ' + cycle.n, cycle.due ? 'review due' : plural(cycle.left, 'day') + ' left');
+    let alert = '';
+    if (year.over) {
+      alert = `
+        <div class="alert">
+          <p>It has been a year since you ran the protocol. Koe’s advice is to run it again every year.</p>
+          <div class="actions"><button type="button" class="btn btn-primary" data-act="newrun-ask">Start a new run</button></div>
+        </div>`;
+    } else if (cycle && cycle.due) {
+      alert = `
+        <div class="alert">
+          <p>Month ${cycle.n} is up. Review it and choose the next boss fight.</p>
+          <div class="actions"><a class="btn btn-primary" href="#review">Review month ${cycle.n}</a></div>
+        </div>`;
+    }
+    return `
+      <section class="status" aria-label="Where you are in the year">
+        <p class="status-line mono">${esc(parts.join(' · '))}</p>
+        <div class="yearbar" style="--p:${clamp(year.day / year.length, 0, 1).toFixed(4)}"></div>
+        ${alert}
+      </section>`;
+  }
+
+  // One row per calendar month, one square per day, shaded by how many quests got done.
+  function yearHtml() {
+    const year = yearInfo();
+    if (!year) return '';
+    const today = startOfDay(new Date());
+    const lastDay = today < year.end ? today : addDays(year.end, -1);
+    const stats = countFullDays(year.start, addDays(lastDay, 1));
+    const streak = currentStreak();
+    const monthName = new Intl.DateTimeFormat(undefined, { month: 'short' });
+    const rows = [];
+    for (let first = new Date(year.start.getFullYear(), year.start.getMonth(), 1); first < year.end; first = new Date(first.getFullYear(), first.getMonth() + 1, 1)) {
+      const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+      let cells = '';
+      for (let day = 1; day <= 31; day++) {
+        const date = new Date(first.getFullYear(), first.getMonth(), day);
+        const inYear = day <= daysInMonth && date >= year.start && date < year.end;
+        const status = !inYear ? 'void' : date > today ? 'future' : dayStatus(dateKey(date));
+        const logged = status !== 'void' && status !== 'future';
+        const isToday = inYear && date.getTime() === today.getTime();
+        cells += `<span class="cell${isToday ? ' is-today' : ''}" data-s="${status}"${logged ? ` data-day="${dateKey(date)}"` : ''}></span>`;
+      }
+      rows.push(`<div class="year-row"><span class="year-month">${esc(monthName.format(first))}</span>${cells}</div>`);
+    }
+    const axis = Array.from({ length: 31 }, (_, i) => `<span>${[1, 8, 15, 22, 29].includes(i + 1) ? i + 1 : ''}</span>`).join('');
+    const summary = stats.full + ' of ' + plural(stats.days, 'day') + ' with every quest done' + (streak > 1 ? ', ' + streak + ' in a row right now' : '');
+    return `
+      <h2 id="year-h" class="section-h">Your year</h2>
+      <p class="body small">${esc(summary)}. Each row is a month and each square is a day. Tap a square to read it.</p>
+      <div class="year" role="img" aria-label="Quest history by day. ${esc(summary)}.">
+        <div class="year-row year-axis" aria-hidden="true"><span></span>${axis}</div>
+        ${rows.join('')}
+      </div>
+      <p class="readout mono" id="year-readout">${esc(readoutText(dateKey(lastDay)))}</p>
+      <ul class="legend" aria-hidden="true">
+        <li><span class="cell" data-s="none"></span>No quests done</li>
+        <li><span class="cell" data-s="some"></span>Some</li>
+        <li><span class="cell" data-s="full"></span>Every quest</li>
+      </ul>`;
+  }
+
+  function monthsHtml() {
+    const cycle = cycleInfo();
+    if (!cycle && !state.months.length) return '';
+    const current = cycle
+      ? `<p class="body small">Month ${cycle.n} runs ${esc(dateRange(cycle.start, cycle.end))}. When it ends you review it and pick the next project. <a href="#review">Close it early</a></p>`
+      : '';
+    const closed = state.months
+      .slice()
+      .reverse()
+      .map(
+        (m) => `
+        <details class="review">
+          <summary>Month ${esc(m.n)} · ${esc(dateRange(parseKey(m.start), parseKey(m.end)))} · ${esc(m.full)}/${esc(m.days)} full days</summary>
+          <dl>
+            <dt>The project</dt><dd>${esc(m.project || '(blank)')}</dd>
+            <dt>What you built or learned</dt><dd>${esc(m.result || '(blank)')}</dd>
+            <dt>Against the one-year goal</dt><dd>${esc(m.compare || '(blank)')}</dd>
+            <dt>What you changed</dt><dd>${esc(m.adjust || '(blank)')}</dd>
+          </dl>
+        </details>`
+      )
+      .join('');
+    return `
+      <section aria-labelledby="months-h">
+        <h2 id="months-h" class="section-h">Months</h2>
+        ${current}
+        ${closed}
+      </section>`;
+  }
+
+  function pastHtml() {
+    if (!state.past.length) return '';
+    return `
+      <h3 class="past-h">Past runs</h3>
+      ${state.past
+        .map(
+          (run, i) => `
+          <details class="review" data-copy-host>
+            <summary>${esc(datedDay.format(parseKey(run.start)) + ' to ' + datedDay.format(parseKey(run.end)))}</summary>
+            <pre class="past-text">${esc(run.text)}</pre>
+            <div class="actions past-actions"><button type="button" class="btn" data-act="copy-past" data-i="${i}">Copy this run</button></div>
+          </details>`
+        )
+        .join('')}`;
+  }
+
+  function backupLine() {
+    if (!state.lastBackup) return 'You have not made a backup yet.';
+    const days = dayDiff(new Date(state.lastBackup), new Date());
+    return days <= 0 ? 'Last backup: today.' : 'Last backup: ' + plural(days, 'day') + ' ago.';
+  }
+
   function gameView() {
     const G = C.game;
+    const ready = KEYS.game.every(filled);
+    const cycle = cycleInfo();
+    const monthMeta = cycle ? 'Month ' + cycle.n + ' · ' + (cycle.due ? 'review due' : 'ends ' + shortDate.format(cycle.end)) : '';
     return `
       <header class="phase-head">
         <p class="eyebrow"><span class="dot"></span>${esc(G.eyebrow)}</p>
         <h1>${esc(G.title)}</h1>
-        <p class="lede">${esc(G.intro)}</p>
+        ${ready ? '' : `<p class="lede">${esc(G.intro)}</p>`}
       </header>
+
+      ${statusHtml()}
 
       <section id="quests" aria-labelledby="quests-h">${questsHtml()}</section>
 
@@ -688,6 +1008,7 @@
               <div class="tile">
                 <span class="tile-mech">${esc(t.mechanic)}</span>
                 <h3 id="tile-h-${esc(t.key)}">${esc(t.name)}</h3>
+                ${t.key === 'month' && monthMeta ? `<span class="tile-meta">${esc(monthMeta)}</span>` : ''}
                 <textarea id="b-${esc(t.key)}" data-key="${esc(t.key)}" rows="3" aria-labelledby="tile-h-${esc(t.key)}"
                   placeholder="${esc(t.prompt)}"></textarea>
               </div>`
@@ -696,27 +1017,195 @@
         </div>
       </section>
 
+      ${state.run ? `<section id="year" aria-labelledby="year-h">${yearHtml()}</section>` : ''}
+
+      ${monthsHtml()}
+
+      <section aria-labelledby="stay-h">
+        <h2 id="stay-h" class="section-h">Stay with it</h2>
+        <p class="body small" data-standalone>This page can’t remind you by itself. Pick a time and add two repeating reminders to your calendar: a daily one for the quests and a monthly one for the review.</p>
+        <div class="actions" data-standalone>
+          <label class="sr-only" for="remind-at">Daily reminder time</label>
+          <input type="time" class="ci-time" id="remind-at" data-remind
+            value="${pad(Math.floor(state.remindAt / 60))}:${pad(state.remindAt % 60)}">
+          <button type="button" class="btn" data-act="year-ics">Add reminders to calendar</button>
+        </div>
+        <p class="body small" data-embed>This page can’t remind you by itself. Set a repeating daily alarm on your phone and name it after your first quest.</p>
+        ${INSTALLED ? '' : '<p class="callout" data-standalone>Add this page to your home screen so it opens like an app and your answers are less likely to be cleared. On iPhone: Share, then Add to Home Screen. On Android: the browser menu, then Install app or Add to Home screen.</p>'}
+      </section>
+
       <section aria-labelledby="keep-h" data-copy-host>
-        <h2 id="keep-h" class="section-h">Keep a copy</h2>
-        <p class="body small">Everything you wrote lives in this browser and nowhere else. Clearing your browser data deletes it, so paste a copy into your notes.</p>
+        <h2 id="keep-h" class="section-h">Keep it safe</h2>
+        <p class="body small">Everything lives in this browser on this device. A backup lets you restore it after your browser data is cleared, or move it to a new phone. <span id="backup-line">${esc(backupLine())}</span></p>
         <div class="actions">
-          <button type="button" class="btn btn-primary" data-act="copy-board">Copy the game board</button>
+          <button type="button" class="btn btn-primary" data-act="backup-download" data-standalone>Download a backup</button>
+          <button type="button" class="btn" data-act="backup-copy">Copy a backup code</button>
+          <button type="button" class="btn" data-act="restore-open">Restore from a backup</button>
+        </div>
+        <div class="restore" id="restore" hidden>
+          <label for="restore-text">Paste a backup code, or choose a backup file.</label>
+          <textarea id="restore-text" class="code-box" rows="4" spellcheck="false" autocapitalize="off"></textarea>
+          <input type="file" id="restore-file" accept=".json,application/json,text/plain" aria-label="Backup file">
+          <div class="actions">
+            <button type="button" class="btn" data-act="restore-check">Check this backup</button>
+            <button type="button" class="btn" data-act="restore-cancel">Cancel</button>
+          </div>
+          <div class="alert" id="restore-confirm" hidden>
+            <p id="restore-summary"></p>
+            <div class="actions"><button type="button" class="btn btn-danger" data-act="restore-yes">Replace what is on this device</button></div>
+          </div>
+        </div>
+        <p class="body small">To read or share your answers as plain text:</p>
+        <div class="actions">
+          <button type="button" class="btn" data-act="copy-board">Copy the game board</button>
           <button type="button" class="btn" data-act="copy-all">Copy every answer</button>
-          <button type="button" class="btn" data-act="download" data-standalone>Download as a file</button>
+          <button type="button" class="btn" data-act="download" data-standalone>Download as text</button>
         </div>
       </section>
 
       <section class="erase" aria-labelledby="erase-h">
-        <h2 id="erase-h" class="sr-only">Start over</h2>
-        <p class="body small">Running the protocol again? Erasing clears every answer and the quest history on this device.</p>
-        <div class="actions" id="erase-ask">
+        <h2 id="erase-h" class="section-h">Run it again</h2>
+        <p class="body small">Koe suggests rerunning the protocol every year. Starting a new run files this one under past runs, then clears the questions, the board and the quest history.</p>
+        <div class="actions" id="over-ask">
+          <button type="button" class="btn" data-act="newrun-ask">Start a new run</button>
           <button type="button" class="btn" data-act="erase-ask">Erase everything</button>
         </div>
-        <div class="actions" id="erase-confirm" hidden>
-          <button type="button" class="btn btn-danger" data-act="erase-yes">Yes, erase it all</button>
-          <button type="button" class="btn" data-act="erase-no">Keep my answers</button>
+        <div class="alert" id="newrun-confirm" hidden>
+          <p>File this run under past runs and start again from the morning questions?</p>
+          <div class="actions">
+            <button type="button" class="btn btn-primary" data-act="newrun-yes">Yes, start a new run</button>
+            <button type="button" class="btn" data-act="over-no">Not now</button>
+          </div>
+        </div>
+        <div class="alert" id="erase-confirm" hidden>
+          <p>Delete every answer, the quest history and all past runs from this device? This cannot be undone.</p>
+          <div class="actions">
+            <button type="button" class="btn btn-danger" data-act="erase-yes">Yes, erase it all</button>
+            <button type="button" class="btn" data-act="over-no">Keep everything</button>
+          </div>
+        </div>
+        ${pastHtml()}
+      </section>`;
+  }
+
+  /* ---------- monthly review ---------- */
+
+  function fieldHtml(key, label, extra) {
+    return `
+      <div class="extra">
+        <h3 id="fl-${key}">${esc(label)}</h3>
+        ${extra || ''}
+        <textarea id="f-${key}" data-key="${key}" rows="3" aria-labelledby="fl-${key}"></textarea>
+      </div>`;
+  }
+
+  function reviewView() {
+    const cycle = cycleInfo();
+    if (!cycle) {
+      return `
+        <header class="phase-head">
+          <p class="eyebrow"><span class="dot"></span>Game board</p>
+          <h1>No month to review yet</h1>
+          <p class="lede">Write a one-month project first, in the evening sitting or on the game board.</p>
+        </header>
+        <div class="actions"><a class="btn btn-primary" href="#game">Back to the game board</a></div>`;
+    }
+    const stats = countFullDays(cycle.start, addDays(startOfDay(new Date()), 1));
+    const early = cycle.due ? '' : ' The month has ' + plural(cycle.left, 'day') + ' left. Closing it now starts the next one today.';
+    return `
+      <header class="phase-head">
+        <p class="eyebrow"><span class="dot"></span>Game board · Month ${cycle.n} review</p>
+        <h1>Close out month ${cycle.n}</h1>
+        <p class="lede">The essay’s steering loop, applied to your month: sense where you are, compare it with the goal, adjust. The three review questions are this app’s addition, not Koe’s.</p>
+      </header>
+
+      <section aria-label="This month">
+        <blockquote class="recall">
+          <span class="recall-label">The boss fight · ${esc(dateRange(cycle.start, cycle.end))}</span>
+          <p>${esc(answer('month') || '(blank)')}</p>
+        </blockquote>
+        <p class="body small">You finished every quest on ${stats.full} of ${plural(stats.days, 'day')}.${esc(early)}</p>
+      </section>
+
+      <section class="fields" aria-label="Review">
+        ${fieldHtml('r1', 'What did you build or learn this month?')}
+        ${fieldHtml('r2', 'Set that against your one-year goal. Are you closer?', recallHtml({ key: 'year', label: 'Your one-year goal' }))}
+        ${fieldHtml('r3', 'What will you do differently next month?')}
+      </section>
+
+      <section class="fields" aria-labelledby="next-h">
+        <h2 id="next-h" class="section-h">Month ${cycle.n + 1}</h2>
+        ${fieldHtml('nextMonth', 'The next one-month project', '<p class="small">What do you need to learn or build next to stay on course for the one-year goal?</p>')}
+        ${fieldHtml('nextDaily', 'Daily levers', '<p class="small">One per line. Keep them, or change them to fit the new project.</p>')}
+        <div class="actions">
+          <button type="button" class="btn btn-primary" data-act="month-close">Start month ${cycle.n + 1}</button>
+          <a class="btn" href="#game">Not yet</a>
         </div>
       </section>`;
+  }
+
+  const REVIEW_KEYS = ['r1', 'r2', 'r3', 'nextMonth', 'nextDaily'];
+
+  function closeMonth() {
+    const cycle = cycleInfo();
+    if (!cycle) return;
+    if (!filled('nextMonth')) {
+      toast('Write the next one-month project first.');
+      document.getElementById('f-nextMonth').focus();
+      return;
+    }
+    const today = startOfDay(new Date());
+    const stats = countFullDays(cycle.start, addDays(today, 1));
+    state.months.push({
+      n: cycle.n,
+      start: state.cycle.start,
+      end: dateKey(today),
+      project: answer('month'),
+      result: answer('r1'),
+      compare: answer('r2'),
+      adjust: answer('r3'),
+      full: stats.full,
+      days: stats.days
+    });
+    state.answers.month = answer('nextMonth');
+    if (filled('nextDaily')) state.answers.daily = answer('nextDaily');
+    REVIEW_KEYS.forEach((key) => delete state.answers[key]);
+    state.cycle = { n: cycle.n + 1, start: dateKey(today) };
+    flush();
+    location.hash = 'game';
+    toast('Month ' + (cycle.n + 1) + ' started.');
+  }
+
+  /* ---------- backup ---------- */
+
+  function backupText() {
+    return JSON.stringify({ app: 'life-changer', version: 1, exported: new Date().toISOString(), state: state });
+  }
+
+  function readBackup(text) {
+    try {
+      const data = JSON.parse(text.trim());
+      if (data && data.app === 'life-changer' && data.state && typeof data.state === 'object') return data;
+    } catch (err) {
+      /* fall through */
+    }
+    return null;
+  }
+
+  function markBackup() {
+    state.lastBackup = new Date().toISOString();
+    flush();
+    const line = document.getElementById('backup-line');
+    if (line) line.textContent = backupLine();
+  }
+
+  // A checked backup waiting for the person to confirm the restore.
+  let pendingRestore = null;
+
+  function reveal(id, on) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = !on;
+    return el;
   }
 
   /* ---------- export ---------- */
@@ -732,6 +1221,19 @@
 
   function allText() {
     const lines = [boardText(), ''];
+    if (state.months.length) {
+      lines.push('--- MONTHS ---', '');
+      state.months.forEach((m) => {
+        lines.push(
+          'Month ' + m.n + ' (' + m.start + ' to ' + m.end + ', ' + m.full + '/' + m.days + ' full days)',
+          'Project: ' + (m.project || '(blank)'),
+          'Built or learned: ' + (m.result || '(blank)'),
+          'Against the one-year goal: ' + (m.compare || '(blank)'),
+          'Changed: ' + (m.adjust || '(blank)'),
+          ''
+        );
+      });
+    }
     const section = (title, items) => {
       lines.push('--- ' + title.toUpperCase() + ' ---', '');
       items.forEach((item) => lines.push(item.label, answer(item.id) || '(blank)', ''));
@@ -790,11 +1292,12 @@
     morning: () => stepperView('morning'),
     day: dayView,
     evening: () => stepperView('evening'),
-    game: gameView
+    game: gameView,
+    review: reviewView
   };
 
   function paintNav() {
-    const route = currentRoute();
+    const route = currentRoute() === 'review' ? 'game' : currentRoute();
     document.querySelectorAll('.nav a').forEach((link) => {
       const name = link.dataset.route;
       if (name === route) link.setAttribute('aria-current', 'page');
@@ -805,9 +1308,11 @@
 
   function render() {
     const route = currentRoute();
+    // The review opens with this month's levers already filled in for next month.
+    if (route === 'review' && state.answers.nextDaily === undefined) state.answers.nextDaily = state.answers.daily || '';
     view.dataset.phase = route;
     view.innerHTML = VIEWS[route]();
-    if (EMBED) view.querySelectorAll('[data-standalone]').forEach((el) => el.remove());
+    view.querySelectorAll(EMBED ? '[data-standalone]' : '[data-embed]').forEach((el) => el.remove());
     view.querySelectorAll('textarea[data-key]').forEach((field) => {
       field.value = state.answers[field.dataset.key] || '';
       fit(field);
@@ -822,13 +1327,21 @@
 
   /* ---------- events ---------- */
 
+  let askedToPersist = false;
+
   view.addEventListener('input', (event) => {
     const field = event.target.closest('textarea[data-key]');
     if (!field) return;
     const key = field.dataset.key;
     state.answers[key] = field.value;
     fit(field);
+    syncDates();
     save();
+    if (!askedToPersist && navigator.storage && navigator.storage.persist) {
+      // Asks the browser not to clear this site's data when the device runs short of space.
+      askedToPersist = true;
+      navigator.storage.persist().catch(() => {});
+    }
     paintNav();
     const seg = view.querySelector('[data-seg="' + key + '"]');
     if (seg) seg.classList.toggle('is-filled', filled(key));
@@ -839,6 +1352,23 @@
   view.addEventListener('change', (event) => {
     const box = event.target.closest('input[data-quest]');
     if (box) toggleQuest(Number(box.dataset.quest), box.checked);
+
+    const remind = event.target.closest('input[data-remind]');
+    if (remind) {
+      const picked = /^(\d{2}):(\d{2})/.exec(remind.value);
+      if (picked) {
+        state.remindAt = Number(picked[1]) * 60 + Number(picked[2]);
+        save();
+      }
+    }
+
+    if (event.target.id === 'restore-file' && event.target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        document.getElementById('restore-text').value = String(reader.result);
+      };
+      reader.readAsText(event.target.files[0]);
+    }
 
     const timeField = event.target.closest('input[data-time]');
     if (timeField) {
@@ -887,14 +1417,84 @@
     'copy-board': (button) => copyText(boardText(), 'Game board copied.', button),
     'copy-all': (button) => copyText(allText(), 'Every answer copied.', button),
     download: () => downloadFile('life-changer.txt', allText(), 'text/plain'),
-    'erase-ask': () => {
-      document.getElementById('erase-ask').hidden = true;
-      document.getElementById('erase-confirm').hidden = false;
-      document.querySelector('[data-act="erase-no"]').focus();
+    'year-ics': () => {
+      downloadFile('life-changer-reminders.ics', yearIcsText(), 'text/calendar');
+      toast('Calendar file saved. Open it to add the reminders.');
     },
-    'erase-no': () => {
-      document.getElementById('erase-confirm').hidden = true;
-      document.getElementById('erase-ask').hidden = false;
+    'month-close': closeMonth,
+    'backup-copy': (button) => {
+      markBackup();
+      copyText(backupText(), 'Backup code copied. Paste it somewhere safe.', button);
+    },
+    'backup-download': () => {
+      markBackup();
+      downloadFile('life-changer-backup-' + dateKey(new Date()) + '.json', backupText(), 'application/json');
+      toast('Backup saved.');
+    },
+    'restore-open': () => {
+      reveal('restore', true);
+      document.getElementById('restore-text').focus();
+    },
+    'restore-cancel': () => {
+      pendingRestore = null;
+      reveal('restore-confirm', false);
+      reveal('restore', false);
+    },
+    'restore-check': () => {
+      const data = readBackup(document.getElementById('restore-text').value);
+      if (!data) {
+        pendingRestore = null;
+        reveal('restore-confirm', false);
+        toast('That is not a Life Changer backup. Paste the whole code, or choose the backup file.');
+        return;
+      }
+      pendingRestore = normalise(data.state);
+      const made = new Date(data.exported);
+      const when = isNaN(made) ? 'an unknown date' : longDate.format(made) + ' ' + made.getFullYear();
+      const answers = Object.keys(pendingRestore.answers).filter((key) => pendingRestore.answers[key].trim()).length;
+      document.getElementById('restore-summary').textContent =
+        'This backup is from ' + when + ' and holds ' + plural(answers, 'answer') + '. Restoring it replaces everything on this device.';
+      reveal('restore-confirm', true);
+    },
+    'restore-yes': () => {
+      if (!pendingRestore) return;
+      state = pendingRestore;
+      pendingRestore = null;
+      flush();
+      render();
+      window.scrollTo(0, 0);
+      toast('Backup restored.');
+    },
+    'copy-past': (button) => copyText(state.past[Number(button.dataset.i)].text, 'Run copied.', button),
+    'newrun-ask': () => {
+      reveal('over-ask', false);
+      reveal('erase-confirm', false);
+      const box = reveal('newrun-confirm', true);
+      box.scrollIntoView({ block: 'center' });
+      box.querySelector('[data-act="over-no"]').focus({ preventScroll: true });
+    },
+    'erase-ask': () => {
+      reveal('over-ask', false);
+      reveal('newrun-confirm', false);
+      reveal('erase-confirm', true).querySelector('[data-act="over-no"]').focus();
+    },
+    'over-no': () => {
+      reveal('newrun-confirm', false);
+      reveal('erase-confirm', false);
+      reveal('over-ask', true);
+    },
+    'newrun-yes': () => {
+      const today = dateKey(new Date());
+      const filed = { start: state.run ? state.run.start : today, end: today, text: allText() };
+      state = Object.assign(blankState(), {
+        past: state.past.concat([filed]),
+        times: state.times,
+        remindAt: state.remindAt,
+        lastBackup: state.lastBackup
+      });
+      flush();
+      location.hash = 'start';
+      toast('New run started. The last one is under past runs.');
     },
     'erase-yes': () => {
       state = blankState();
@@ -904,6 +1504,19 @@
       toast('Everything erased.');
     }
   };
+
+  // Hovering or tapping a square in the year grid reads that day out below it.
+  function pickDay(event) {
+    const cell = event.target.closest && event.target.closest('.cell[data-day]');
+    const readout = document.getElementById('year-readout');
+    if (!cell || !readout) return;
+    view.querySelectorAll('.cell.is-picked').forEach((other) => other.classList.remove('is-picked'));
+    cell.classList.add('is-picked');
+    readout.textContent = readoutText(cell.dataset.day);
+  }
+
+  view.addEventListener('pointerover', pickDay);
+  view.addEventListener('click', pickDay);
 
   function setLoop(index) {
     const count = C.ideas.loop.steps.length;
@@ -937,6 +1550,12 @@
   }
   setInterval(paintDay, 30000);
 
+  syncDates();
   flush();
   render();
+
+  // Lets the installed app open with no connection. Embedded previews have no service workers.
+  if (!EMBED && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
