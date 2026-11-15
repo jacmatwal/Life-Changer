@@ -2,8 +2,8 @@
  * Offline support for the installed app.
  * Network first, so an online visit always gets the latest files; the cache is the fallback.
  */
-const CACHE = 'life-changer-v1';
-const SHELL = ['./', 'index.html', 'styles.css', 'content.js', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
+const CACHE = 'life-changer-v2';
+const SHELL = ['./', 'index.html', 'styles.css', 'content.en.js', 'content.es.js', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

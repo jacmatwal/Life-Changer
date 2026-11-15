@@ -20,9 +20,16 @@
 </head>
 <body>
 <!-- app:start -->
+<div class="wrap bar">
+  <a class="brand" href="#start">Life Changer</a>
+  <div class="lang" id="lang" role="group" aria-label="Language">
+    <button type="button" data-lang="en" aria-pressed="true" lang="en" title="English">EN</button>
+    <button type="button" data-lang="es" aria-pressed="false" lang="es" title="Español">ES</button>
+  </div>
+</div>
+
 <header class="top">
-  <div class="wrap top-in">
-    <a class="brand" href="#start">Life Changer</a>
+  <div class="wrap">
     <nav class="nav" aria-label="Sections">
       <a href="#start" data-route="start">Start</a>
       <a href="#ideas" data-route="ideas">Ideas</a>
@@ -41,17 +48,18 @@
 </main>
 
 <footer class="wrap foot">
-  <p>
+  <p id="foot-source">
     An unofficial companion to Dan Koe&rsquo;s essay
-    <a id="source-link" href="https://letters.thedankoe.com/p/how-to-fix-your-entire-life-in-1" target="_blank" rel="noopener">How to fix your entire life in 1 day</a>.
+    <a href="https://letters.thedankoe.com/p/how-to-fix-your-entire-life-in-1" target="_blank" rel="noopener">How to fix your entire life in 1 day</a>.
     The ideas are his. The wording here is a simplified paraphrase, so read the original for the full argument.
   </p>
-  <p>Your answers are saved in this browser only and are never sent anywhere. This is a reflection exercise, not mental-health care.</p>
+  <p id="foot-privacy">Your answers are saved in this browser only and are never sent anywhere. This is a reflection exercise, not mental-health care.</p>
 </footer>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <!-- app:end -->
-<script src="content.js"></script>
+<script src="content.en.js"></script>
+<script src="content.es.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

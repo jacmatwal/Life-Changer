@@ -27,6 +27,16 @@ simplified paraphrase, not a copy of the essay.
 - **Reminders.** A calendar file with a daily reminder for the quests and a monthly one for the review.
 - **Backup and restore.** Download or copy a backup, and restore it on the same phone or a new one.
 
+## Languages
+
+English and Latin American Spanish, switched with the EN / ES control at the top right.
+A first visit follows the browser's language; after that the app remembers the choice.
+Answers are not translated: they stay exactly as typed.
+
+To add a language, copy `content.en.js` to `content.<code>.js`, translate the values (not
+the keys or ids), load it in `index.html`, add a button to the language switch, and add
+the file to `SHELL` in `sw.js`.
+
 ## Using it as two people
 
 Each person opens the app on their own phone. Answers are saved in that browser only, so
@@ -51,7 +61,8 @@ branch root).
 ## Files
 
 - `index.html`: page shell, header, footer.
-- `content.js`: every question, hint and explanation. Edit wording here.
+- `content.en.js`, `content.es.js`: every question, hint, explanation and interface label, one
+  file per language with identical structure. Edit wording here.
 - `app.js`: routing, state, rendering, the year and month clocks, backup and export.
 - `styles.css`: design tokens (light and dark) and all styling.
 - `manifest.webmanifest`, `icons/`, `sw.js`: home-screen install and offline support. When you
