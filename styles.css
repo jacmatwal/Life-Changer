@@ -405,15 +405,33 @@ textarea:focus-visible {
 
 /* ---------- ideas ---------- */
 
-.problem {
-  display: grid;
-  gap: 1rem;
+.idea .eyebrow { letter-spacing: 0.08em; }
+
+.pairs {
+  width: 100%;
   max-width: 38rem;
-  font-size: var(--t-lg);
+  border-collapse: collapse;
+  font-size: var(--t-sm);
   line-height: 1.45;
 }
 
-.problem strong { font-family: var(--font-display); font-weight: 700; }
+.pairs th,
+.pairs td {
+  width: 50%;
+  padding: 0.625rem 0.75rem 0.625rem 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.pairs th {
+  color: var(--muted);
+  font: 500 var(--t-xs)/1.3 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pairs td:first-child { color: var(--muted); }
 
 .loop {
   display: grid;
@@ -439,6 +457,8 @@ textarea:focus-visible {
 
 .ring-path { fill: none; stroke: var(--line); stroke-width: 0.6; }
 .ring-arrow { fill: var(--muted); }
+.ring-cut rect { fill: var(--bg); }
+.ring-cut path { fill: none; stroke: var(--ink); stroke-width: 0.9; stroke-linecap: round; }
 
 .ring-node {
   position: absolute;
@@ -495,54 +515,75 @@ textarea:focus-visible {
   font-size: var(--t-sm);
 }
 
-.principles {
-  display: grid;
-  gap: 2rem;
-}
-
-.principle {
-  display: grid;
-  gap: 0.75rem;
-  max-width: 38rem;
-}
-
-.principle h3 {
-  font-size: var(--t-lg);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
 .stages {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  max-width: 38rem;
 }
 
-.stages li {
+.stages li { display: grid; min-width: 0; }
+
+.stage {
   display: grid;
+  align-content: start;
   gap: 0.15rem;
   min-width: 0;
+  min-height: 3.25rem;
   padding: 0.5rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: none;
   color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.25;
+  font: 500 0.75rem/1.25 var(--font-body);
+  text-align: left;
   overflow-wrap: break-word;
   hyphens: auto;
+  cursor: pointer;
 }
 
-@media (min-width: 26rem) {
-  .stages li { padding: 0.5rem 0.625rem; font-size: 0.8125rem; }
-}
+.stage .mono { font-size: var(--t-xs); }
+.stage:hover { border-color: var(--muted); }
 
-.stages .mono { font-size: var(--t-xs); }
-
-.stages .in-range {
+.stage.in-range {
   border-color: var(--ink);
   background: var(--surface);
   color: var(--ink);
   font-weight: 600;
+}
+
+.stage[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--bg);
+}
+
+@media (min-width: 26rem) {
+  .stage { padding: 0.5rem 0.625rem; font-size: 0.8125rem; }
+}
+
+.stage-text {
+  max-width: 38rem;
+  min-height: 4.7em;
+}
+
+.numbered {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 38rem;
+  counter-reset: step;
+}
+
+.numbered li {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  counter-increment: step;
+}
+
+.numbered li::before {
+  content: counter(step);
+  color: var(--muted);
+  font: 500 var(--t-sm)/1.75 var(--font-mono);
 }
 
 .chain {
@@ -637,6 +678,52 @@ textarea:focus-visible {
 }
 
 .hint { max-width: 38rem; color: var(--muted); }
+
+.recall {
+  display: grid;
+  gap: 0.25rem;
+  max-width: 38rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  background: var(--sunk);
+  font-size: var(--t-sm);
+}
+
+.recall-label {
+  color: var(--muted);
+  font: 500 0.6875rem/1.3 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.recall p,
+.review dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.review {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--t-sm);
+}
+
+.review summary {
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.review dl {
+  display: grid;
+  gap: 0.25rem;
+  max-height: 22rem;
+  margin: 0;
+  padding: 0 1rem 1rem;
+  overflow-y: auto;
+}
+
+.review dt { margin-top: 0.75rem; color: var(--muted); }
+.review dd { margin: 0; }
 
 .step-nav {
   display: flex;
@@ -739,7 +826,16 @@ textarea:focus-visible {
   gap: 0.75rem;
 }
 
-.ci-time { font-size: var(--t-base); font-weight: 500; }
+.ci-time {
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: 500 1rem/1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
 
 .badge {
   padding: 0.25rem 0.5rem;

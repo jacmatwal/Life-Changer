@@ -6,8 +6,6 @@
   const EMBED = !!window.LC_EMBED;
   const STORE_KEY = 'life-changer:v1';
   const ROUTES = ['start', 'ideas', 'morning', 'day', 'evening', 'game'];
-  const RAIL_START = 10 * 60;
-  const RAIL_END = 22 * 60;
 
   const view = document.getElementById('view');
   const toastEl = document.getElementById('toast');
@@ -16,7 +14,7 @@
   /* ---------- state ---------- */
 
   function blankState() {
-    return { answers: {}, quests: {}, pos: { morning: 0, evening: 0 }, loop: 0 };
+    return { answers: {}, quests: {}, times: {}, pos: { morning: 0, evening: 0 }, loop: 0, stage: 3 };
   }
 
   function loadState() {
@@ -28,8 +26,10 @@
       return {
         answers: Object.assign(base.answers, saved.answers),
         quests: Object.assign(base.quests, saved.quests),
+        times: Object.assign(base.times, saved.times),
         pos: Object.assign(base.pos, saved.pos),
-        loop: Number(saved.loop) || 0
+        loop: Number(saved.loop) || 0,
+        stage: Number.isInteger(saved.stage) ? saved.stage : base.stage
       };
     } catch (err) {
       return base;
@@ -116,6 +116,12 @@
     textarea.style.height = textarea.scrollHeight + 2 + 'px';
   }
 
+  // Shows an earlier answer next to a question that builds on it.
+  function recallHtml(recall) {
+    if (!recall || !filled(recall.key)) return '';
+    return `<blockquote class="recall"><span class="recall-label">${esc(recall.label)}</span><p>${esc(answer(recall.key))}</p></blockquote>`;
+  }
+
   let toastTimer = 0;
   function toast(message) {
     toastEl.textContent = message;
@@ -196,10 +202,16 @@
       const rad = (deg * Math.PI) / 180;
       return { x: 50 + radius * Math.cos(rad), y: 50 + radius * Math.sin(rad) };
     };
+    const cutIndex = C.ideas.loop.breakAfter - 1;
     const arrows = steps
       .map((_, i) => {
         const deg = -90 + (i + 0.5) * arc;
         const p = point(deg);
+        if (i === cutIndex) {
+          // Local x runs along the radius here, so this draws two short strokes across the ring.
+          return `<g class="ring-cut" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)}) rotate(${deg})">
+            <rect x="-2" y="-1.4" width="4" height="2.8"/><path d="M-3.6,-1.4 L3.6,-1.4 M-3.6,1.4 L3.6,1.4"/></g>`;
+        }
         return `<path class="ring-arrow" d="M-1.6,-1.5 L1.8,0 L-1.6,1.5 Z" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)}) rotate(${deg + 90})"/>`;
       })
       .join('');
@@ -234,22 +246,57 @@
       '<strong>' + esc(steps[i].title) + '.</strong> ' + esc(steps[i].text);
   }
 
-  function principleExtra(p) {
-    if (p.stages) {
+  function loopHtml() {
+    return `
+      <div class="loop">
+        ${ringHtml()}
+        <div class="loop-panel">
+          <p class="loop-text" id="loop-text" aria-live="polite"></p>
+          <div class="actions">
+            <button type="button" class="btn" data-act="loop-prev">Previous</button>
+            <button type="button" class="btn btn-primary" data-act="loop-next">Next step</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function stagesHtml() {
+    const S = C.ideas.stages;
+    return `
+      <ol class="stages" lang="en">
+        ${S.items
+          .map((stage, i) => {
+            const inRange = i + 1 >= S.range[0] && i + 1 <= S.range[1];
+            return `<li><button type="button" class="stage${inRange ? ' in-range' : ''}" data-act="stage" data-i="${i}"
+              aria-pressed="false"><span class="mono">${i + 1}</span>${esc(stage.name)}</button></li>`;
+          })
+          .join('')}
+      </ol>
+      <p class="stage-text" id="stage-text" aria-live="polite"></p>
+      <p class="small">${esc(S.note)}</p>`;
+  }
+
+  function paintStage() {
+    const items = C.ideas.stages.items;
+    const i = clamp(state.stage, 0, items.length - 1);
+    view.querySelectorAll('.stage').forEach((button, n) => button.setAttribute('aria-pressed', String(n === i)));
+    document.getElementById('stage-text').innerHTML =
+      '<strong>' + (i + 1) + '. ' + esc(items[i].name) + '.</strong> ' + esc(items[i].text);
+  }
+
+  function blockHtml(block) {
+    if (block.p) return `<p class="body">${esc(block.p)}</p>`;
+    if (block.callout) return `<p class="callout">${esc(block.callout)}</p>`;
+    if (block.loop) return loopHtml();
+    if (block.stages) return stagesHtml();
+    if (block.chain) return `<ol class="chain">${block.chain.map((link) => `<li><span>${esc(link)}</span></li>`).join('')}</ol>`;
+    if (block.list) return `<ol class="numbered">${block.list.map((item) => `<li>${esc(item)}</li>`).join('')}</ol>`;
+    if (block.table) {
       return `
-        <ol class="stages" lang="en">
-          ${p.stages
-            .map((name, i) => {
-              const n = i + 1;
-              const inRange = n >= p.stageRange[0] && n <= p.stageRange[1];
-              return `<li class="${inRange ? 'in-range' : ''}"><span class="mono">${n}</span>${esc(name)}</li>`;
-            })
-            .join('')}
-        </ol>
-        <p class="small">Outlined: stages ${p.stageRange[0]} to ${p.stageRange[1]}, where most readers sit. ${esc(p.stageNote)}</p>`;
-    }
-    if (p.chain) {
-      return `<ol class="chain">${p.chain.map((link) => `<li><span>${esc(link)}</span></li>`).join('')}</ol>`;
+        <table class="pairs">
+          <thead><tr>${block.table.head.map((cell) => `<th scope="col">${esc(cell)}</th>`).join('')}</tr></thead>
+          <tbody>${block.table.rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>`;
     }
     return '';
   }
@@ -263,36 +310,16 @@
         <p class="lede">${esc(I.intro)}</p>
       </header>
 
-      <section aria-label="The core problem">
-        <ul class="problem">
-          ${I.problem.map((item) => `<li><strong>${esc(item.lead)}</strong> ${esc(item.text)}</li>`).join('')}
-        </ul>
-      </section>
-
-      <section aria-labelledby="loop-h">
-        <h2 id="loop-h" class="section-h">${esc(I.loop.title)}</h2>
-        <p class="body">${esc(I.loop.intro)}</p>
-        <div class="loop">
-          ${ringHtml()}
-          <div class="loop-panel">
-            <p class="loop-text" id="loop-text" aria-live="polite"></p>
-            <div class="actions">
-              <button type="button" class="btn" data-act="loop-prev">Previous</button>
-              <button type="button" class="btn btn-primary" data-act="loop-next">Next step</button>
-            </div>
-          </div>
-        </div>
-        <p class="callout">${esc(I.loop.note)}</p>
-      </section>
-
-      <section aria-labelledby="principles-h">
-        <h2 id="principles-h" class="section-h">Five ideas behind the protocol</h2>
-        <div class="principles">
-          ${I.principles
-            .map((p) => `<article class="principle"><h3>${esc(p.title)}</h3><p>${esc(p.text)}</p>${principleExtra(p)}</article>`)
-            .join('')}
-        </div>
-      </section>
+      ${I.sections
+        .map(
+          (section, i) => `
+          <section class="idea" aria-labelledby="idea-h-${i}">
+            <p class="eyebrow">Idea ${i + 1} of ${I.sections.length}</p>
+            <h2 id="idea-h-${i}" class="section-h">${esc(section.title)}</h2>
+            ${section.blocks.map(blockHtml).join('')}
+          </section>`
+        )
+        .join('')}
 
       <div class="actions">
         <a class="btn btn-primary" href="#morning">Go to the morning sitting</a>
@@ -334,21 +361,39 @@
         <h1>${esc(P.title)}</h1>
       </header>
 
+      ${phase === 'evening' ? reviewHtml() : ''}
+
       <section class="step" aria-labelledby="q-title">
         <div class="segs" role="group" aria-label="Questions">${segs}</div>
         <p class="step-meta mono">${esc(q.group)} · ${i + 1} of ${questions.length}</p>
         ${q.groupIntro ? `<p class="group-intro">${esc(q.groupIntro)}</p>` : ''}
         <h2 id="q-title" tabindex="-1">${esc(q.prompt)}</h2>
         ${q.hint ? `<p class="hint">${esc(q.hint)}</p>` : ''}
+        ${recallHtml(q.recall)}
         <label class="sr-only" for="f-${esc(q.id)}">Your answer</label>
         <textarea id="f-${esc(q.id)}" data-key="${esc(q.id)}" rows="6"
           placeholder="${esc(q.placeholder || 'Write it out. Nobody else reads this.')}"></textarea>
         <div class="step-nav">
           <button type="button" class="btn" data-act="prev"${i === 0 ? ' disabled' : ''}>Back</button>
-          <span class="saved">Saved in this browser as you type</span>
+          <span class="saved">Saved as you type</span>
           ${forward}
         </div>
       </section>`;
+  }
+
+  // Everything written earlier in the day, for rereading before the evening questions.
+  function reviewHtml() {
+    const items = QUESTIONS.morning
+      .map((q) => ({ id: q.id, label: q.prompt }))
+      .concat(C.day.checkins.map((c) => ({ id: c.id, label: formatTime(timeOf(c)) + '  ' + c.prompt })))
+      .concat(C.day.extras.map((x) => ({ id: x.id, label: x.prompt })))
+      .filter((item) => filled(item.id));
+    if (!items.length) return '';
+    return `
+      <details class="review">
+        <summary>Reread what you wrote today (${items.length})</summary>
+        <dl>${items.map((item) => `<dt>${esc(item.label)}</dt><dd>${esc(answer(item.id))}</dd>`).join('')}</dl>
+      </details>`;
   }
 
   function moveStep(phase, index) {
@@ -362,21 +407,41 @@
 
   /* ---------- day ---------- */
 
+  // A check-in fires at the suggested time unless the person picked their own.
+  function timeOf(checkin) {
+    const own = state.times[checkin.id];
+    return Number.isInteger(own) ? own : checkin.at;
+  }
+
+  const sortedCheckins = () => C.day.checkins.slice().sort((a, b) => timeOf(a) - timeOf(b));
+  const firstCheckinTime = () => Math.min.apply(null, C.day.checkins.map(timeOf));
+
+  // The timeline spans 10:00 to 22:00 and widens by whole hours if a custom time falls outside.
+  function railRange() {
+    const times = C.day.checkins.map(timeOf);
+    const earliest = Math.floor(Math.min.apply(null, times) / 60) * 60 - 60;
+    const latest = Math.ceil(Math.max.apply(null, times) / 60) * 60 + 60;
+    return { start: Math.max(0, Math.min(10 * 60, earliest)), end: Math.min(24 * 60, Math.max(22 * 60, latest)) };
+  }
+
   function checkinState(checkin, now) {
     if (filled(checkin.id)) return 'done';
-    return now >= checkin.at ? 'due' : 'later';
+    return now >= timeOf(checkin) ? 'due' : 'later';
   }
 
   const STATE_LABEL = { done: 'Answered', due: 'Ready', later: 'Not yet' };
 
   function dayView() {
     const D = C.day;
+    const range = railRange();
+    const customised = Object.keys(state.times).length > 0;
     const ticks = D.checkins
       .map((c, i) => {
-        const left = ((c.at - RAIL_START) / (RAIL_END - RAIL_START)) * 100;
+        const at = timeOf(c);
+        const left = ((at - range.start) / (range.end - range.start)) * 100;
         return `<button type="button" class="rail-tick" data-act="jump" data-i="${i}" data-tick="${esc(c.id)}"
-          style="left:${left.toFixed(2)}%" aria-label="Go to the ${esc(formatTime(c.at))} check-in">
-          <span class="rail-dot"></span><span>${esc(formatTimeShort(c.at))}</span></button>`;
+          style="left:${left.toFixed(2)}%" aria-label="Go to the ${esc(formatTime(at))} check-in">
+          <span class="rail-dot"></span><span>${esc(formatTimeShort(at))}</span></button>`;
       })
       .join('');
 
@@ -399,6 +464,7 @@
         <div class="actions">
           <button type="button" class="btn" data-act="copy-schedule">Copy the schedule</button>
           <button type="button" class="btn" data-act="ics" data-standalone>Add to calendar (${esc(reminderDayLabel())})</button>
+          ${customised ? '<button type="button" class="btn" data-act="reset-times">Use the suggested times</button>' : ''}
         </div>
       </section>
 
@@ -409,10 +475,13 @@
               (c, i) => `
               <li class="checkin" id="ci-${i}" data-checkin="${esc(c.id)}">
                 <div class="ci-head">
-                  <span class="ci-time mono">${esc(formatTime(c.at))}</span>
+                  <label class="sr-only" for="time-${esc(c.id)}">Reminder time</label>
+                  <input type="time" class="ci-time" id="time-${esc(c.id)}" data-time="${esc(c.id)}"
+                    value="${pad(Math.floor(timeOf(c) / 60))}:${pad(timeOf(c) % 60)}">
                   <span class="badge"></span>
                 </div>
                 <h2 id="ci-h-${i}">${esc(c.prompt)}</h2>
+                ${c.hint ? `<p class="small">${esc(c.hint)}</p>` : ''}
                 <textarea id="f-${esc(c.id)}" data-key="${esc(c.id)}" rows="2" aria-labelledby="ci-h-${i}"
                   placeholder="A line or two is enough."></textarea>
               </li>`
@@ -431,6 +500,7 @@
               <div class="extra">
                 <h3 id="x-h-${esc(x.id)}">${esc(x.prompt)}</h3>
                 ${x.hint ? `<p class="small">${esc(x.hint)}</p>` : ''}
+                ${recallHtml(x.recall)}
                 <textarea id="f-${esc(x.id)}" data-key="${esc(x.id)}" rows="2" aria-labelledby="x-h-${esc(x.id)}"
                   placeholder="Optional."></textarea>
               </div>`
@@ -459,8 +529,9 @@
     });
     const marker = document.getElementById('rail-now');
     if (marker) {
-      const inRange = now >= RAIL_START && now <= RAIL_END;
-      const left = ((now - RAIL_START) / (RAIL_END - RAIL_START)) * 100;
+      const range = railRange();
+      const inRange = now >= range.start && now <= range.end;
+      const left = ((now - range.start) / (range.end - range.start)) * 100;
       marker.hidden = !inRange;
       marker.style.left = left.toFixed(2) + '%';
       marker.classList.toggle('flip', left > 80);
@@ -470,16 +541,16 @@
   // Reminders go on today's calendar until the first one has passed, then on tomorrow's.
   function reminderDate() {
     const d = new Date();
-    if (minutesNow() >= C.day.checkins[0].at) d.setDate(d.getDate() + 1);
+    if (minutesNow() >= firstCheckinTime()) d.setDate(d.getDate() + 1);
     return d;
   }
 
   function reminderDayLabel() {
-    return minutesNow() >= C.day.checkins[0].at ? 'tomorrow' : 'today';
+    return minutesNow() >= firstCheckinTime() ? 'tomorrow' : 'today';
   }
 
   function scheduleText() {
-    return C.day.checkins.map((c) => formatTime(c.at) + '  ' + c.prompt).join('\n');
+    return sortedCheckins().map((c) => formatTime(timeOf(c)) + '  ' + c.prompt).join('\n');
   }
 
   function icsText() {
@@ -491,14 +562,15 @@
     const fold = (line) => line.replace(/(.{60})(?=.)/g, '$1\r\n ');
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Life Changer//One-day reset//EN', 'CALSCALE:GREGORIAN'];
-    C.day.checkins.forEach((c) => {
+    sortedCheckins().forEach((c) => {
+      const at = timeOf(c);
       const text = icsEscape(c.prompt);
       lines.push(
         'BEGIN:VEVENT',
         'UID:' + ymd + '-' + c.id + '@life-changer',
         'DTSTAMP:' + stamp,
-        'DTSTART:' + ymd + 'T' + hm(c.at),
-        'DTEND:' + ymd + 'T' + hm(c.at + 10),
+        'DTSTART:' + ymd + 'T' + hm(at),
+        'DTEND:' + ymd + 'T' + hm(Math.min(at + 10, 24 * 60 - 1)),
         'SUMMARY:' + text,
         'DESCRIPTION:Life Changer check-in. Answer it in the app.',
         'BEGIN:VALARM',
@@ -667,8 +739,8 @@
     section('Morning: excavation', QUESTIONS.morning.map((q) => ({ id: q.id, label: q.prompt })));
     section(
       'Daytime: pattern interrupts',
-      C.day.checkins
-        .map((c) => ({ id: c.id, label: formatTime(c.at) + '  ' + c.prompt }))
+      sortedCheckins()
+        .map((c) => ({ id: c.id, label: formatTime(timeOf(c)) + '  ' + c.prompt }))
         .concat(C.day.extras.map((x) => ({ id: x.id, label: x.prompt })))
     );
     section('Evening: synthesis', QUESTIONS.evening.map((q) => ({ id: q.id, label: q.prompt })));
@@ -740,7 +812,10 @@
       field.value = state.answers[field.dataset.key] || '';
       fit(field);
     });
-    if (route === 'ideas') paintLoop();
+    if (route === 'ideas') {
+      paintLoop();
+      paintStage();
+    }
     if (route === 'day') paintDay();
     paintNav();
   }
@@ -764,6 +839,20 @@
   view.addEventListener('change', (event) => {
     const box = event.target.closest('input[data-quest]');
     if (box) toggleQuest(Number(box.dataset.quest), box.checked);
+
+    const timeField = event.target.closest('input[data-time]');
+    if (timeField) {
+      const id = timeField.dataset.time;
+      const match = /^(\d{2}):(\d{2})/.exec(timeField.value);
+      const suggested = C.day.checkins.find((c) => c.id === id).at;
+      const minutes = match ? Number(match[1]) * 60 + Number(match[2]) : suggested;
+      if (minutes === suggested) delete state.times[id];
+      else state.times[id] = minutes;
+      flush();
+      render();
+      const again = document.getElementById('time-' + id);
+      if (again) again.focus({ preventScroll: true });
+    }
   });
 
   const ACTIONS = {
@@ -773,6 +862,17 @@
     'loop-go': (button) => setLoop(Number(button.dataset.i)),
     'loop-prev': () => setLoop(state.loop - 1),
     'loop-next': () => setLoop(state.loop + 1),
+    stage: (button) => {
+      state.stage = Number(button.dataset.i);
+      save();
+      paintStage();
+    },
+    'reset-times': () => {
+      state.times = {};
+      flush();
+      render();
+      toast('Back to the suggested times.');
+    },
     jump: (button) => {
       const card = document.getElementById('ci-' + button.dataset.i);
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;

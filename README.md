@@ -11,10 +11,10 @@ simplified paraphrase, not a copy of the essay.
 | Section | What happens there |
 | --- | --- |
 | Start | The thesis, your progress through the day, and what to know before you begin. |
-| Ideas | The argument in five minutes, with a clickable diagram of the identity loop. |
-| Morning | Eleven excavation questions, one at a time: eight on the life you don't want, three on the one you do. |
-| Day | Six timed check-ins (11:00, 1:30, 3:15, 5:00, 7:30, 9:00) on a timeline that tracks the clock, plus three questions for idle moments. |
-| Evening | Eight synthesis questions that end in a one-year goal, a one-month project, daily actions and constraints. |
+| Ideas | The essay's five arguments in five minutes, with a clickable identity loop and the nine stages of ego development. |
+| Morning | Fourteen excavation questions, one at a time: four on present pain, seven building the anti-vision, three on the vision. Later questions show the earlier answer they build on. |
+| Day | Six timed check-ins on a timeline that tracks the clock, with the essay's suggested times (11:00, 1:30, 3:15, 5:00, 7:30, 9:00) editable to fit your day, plus three questions for idle moments. |
+| Evening | Eight synthesis questions that end in a one-year lens, a one-month lens, tomorrow's actions and constraints, with the day's answers available to reread. |
 | Game | Your six-piece game board, built from the evening answers and editable in place, with a daily quest checklist and a seven-day history. |
 
 Answers are saved in the browser's `localStorage` as you type. Nothing is sent to a server.
